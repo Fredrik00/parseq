@@ -70,6 +70,9 @@ class PARSeq(nn.Module):
         named_apply(partial(init_weights, exclude=['encoder']), self)
         nn.init.trunc_normal_(self.pos_queries, std=0.02)
 
+        # Enable this before ONNX/TFLITE export for compatibility changes during forward pass
+        self.export_mode = False
+
     @property
     def _device(self) -> torch.device:
         return next(self.head.parameters(recurse=False)).device
@@ -114,7 +117,10 @@ class PARSeq(nn.Module):
         pos_queries = self.pos_queries[:, :num_steps].expand(bs, -1, -1)
 
         # Special case for the forward permutation. Faster than using `generate_attn_masks()`
-        tgt_mask = query_mask = torch.triu(torch.ones((num_steps, num_steps), dtype=torch.bool, device=self._device), 1)
+        # FIXME: torch.bool unsupported by onnxruntime for "Where" operation. torch.float slightly reduces performance.
+        # tgt_mask = query_mask = torch.triu(torch.ones((num_steps, num_steps), dtype=torch.bool, device=self._device), 1)
+        # From PyTorch 1 version of PARSeq
+        tgt_mask = query_mask = torch.triu(torch.full((num_steps, num_steps), float('-inf'), device=self._device), 1)
 
         if self.decode_ar:
             tgt_in = torch.full((bs, num_steps), tokenizer.pad_id, dtype=torch.long, device=self._device)
@@ -141,7 +147,8 @@ class PARSeq(nn.Module):
                     # greedy decode. add the next token index to the target input
                     tgt_in[:, j] = p_i.squeeze().argmax(-1)
                     # Efficient batch decoding: If all output words have at least one EOS token, end decoding.
-                    if testing and (tgt_in == tokenizer.eos_id).any(dim=-1).all():
+                    # TODO: Not compatible with tflite export. Safe to remove? Can we simplify?
+                    if not self.export_mode and testing and (tgt_in == tokenizer.eos_id).any(dim=-1).all():
                         break
 
             logits = torch.cat(logits, dim=1)
@@ -154,7 +161,13 @@ class PARSeq(nn.Module):
         if self.refine_iters:
             # For iterative refinement, we always use a 'cloze' mask.
             # We can derive it from the AR forward mask by unmasking the token context to the right.
-            query_mask[torch.triu(torch.ones(num_steps, num_steps, dtype=torch.bool, device=self._device), 2)] = 0
+            if self.export_mode:  # Requires concrete boolean indexing for JAX compatibility. # TODO: Performance loss?
+                for x in range(2, num_steps):
+                    for y in range(0, x - 1):
+                        query_mask[y, x] = 0
+            else:
+                query_mask[torch.triu(torch.ones(num_steps, num_steps, dtype=torch.bool, device=self._device), 2)] = 0
+
             bos = torch.full((bs, 1), tokenizer.bos_id, dtype=torch.long, device=self._device)
             for i in range(self.refine_iters):
                 # Prior context is the previous output.
@@ -165,5 +178,8 @@ class PARSeq(nn.Module):
                     tgt_in, memory, tgt_mask, tgt_padding_mask, pos_queries, query_mask[:, : tgt_in.shape[1]]
                 )
                 logits = self.head(tgt_out)
+
+        if self.export_mode:
+            return logits.softmax(dim=2)
 
         return logits
