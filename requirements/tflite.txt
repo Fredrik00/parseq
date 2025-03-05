@@ -1,0 +1,7 @@
+torch==2.6.0
+ai-edge-torch-nightly
+pyyaml
+nltk
+pytorch-lightning
+timm
+opencv-python-headless
