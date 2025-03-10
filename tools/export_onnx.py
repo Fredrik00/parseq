@@ -6,7 +6,7 @@ from os import path
 # PyTorch export does not support fused attention as of version 2.0
 os.environ['TIMM_FUSED_ATTN'] = '0'
 
-import ai_edge_torch
+import torch
 import yaml
 
 from PIL import Image
@@ -30,10 +30,10 @@ def get_dummy_input(img_h=32, img_w=128, n_channels=3):
 
 if __name__ == '__main__':
     model_name = "parseq"
-    output_dir = "tflite"
+    output_dir = "onnx"
     os.makedirs(output_dir, exist_ok=True)
 
-    output_path = path.join(output_dir, f"{model_name}.tflite")
+    output_path = path.join(output_dir, f"{model_name}.onnx")
 
     with open("configs/model/parseq.yaml", "r") as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
@@ -49,10 +49,20 @@ if __name__ == '__main__':
     lightning_model.eval()
 
     image = get_dummy_input()
+    image_batch = image.repeat(128, 1, 1, 1)
 
     # Test model forward pass for debugging purposes
-    lightning_model(image)
+    # lightning_model(image)
 
-    tf_model_dir = path.join(output_dir, model_name)
-    edge_model = ai_edge_torch.convert(lightning_model, (image,), strict_export=True, _saved_model_dir=tf_model_dir)
-    edge_model.export(output_path)
+    onnx_model = torch.onnx.export(
+        lightning_model,
+        image_batch,
+        input_names=['input'],
+        output_names=['output'],
+        dynamo=True,
+        dynamic_shapes=[{0: torch.export.Dim('batch_size', min=1, max=128)}],
+        optimize=True,
+        verbose=True  # Includes metadata used during quantization
+    )
+
+    onnx_model.save(output_path)

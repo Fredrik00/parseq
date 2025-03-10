@@ -146,9 +146,13 @@ class PARSeq(nn.Module):
                 if j < num_steps:
                     # greedy decode. add the next token index to the target input
                     tgt_in[:, j] = p_i.squeeze().argmax(-1)
+
+                    # TODO: Efficient batch decoding check not compatible with export. Can we assume it to always be true?
+                    if self.export_mode is not None:
+                        break
+
                     # Efficient batch decoding: If all output words have at least one EOS token, end decoding.
-                    # TODO: Not compatible with tflite export. Safe to remove? Can we simplify?
-                    if not self.export_mode and testing and (tgt_in == tokenizer.eos_id).any(dim=-1).all():
+                    if testing and (tgt_in == tokenizer.eos_id).any(dim=-1).all():
                         break
 
             logits = torch.cat(logits, dim=1)

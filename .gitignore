@@ -147,3 +147,4 @@ cython_debug/
 # IDE
 .idea/
 tflite/
+onnx/
