@@ -13,18 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-from typing import Optional, Sequence
-
 import torch
-import torch.nn as nn
-from torch import Tensor
-
+from functools import partial
 from timm.models.helpers import named_apply
+from torch import nn, Tensor
+from typing import Optional, Sequence
 
 from strhub.data.utils import Tokenizer
 from strhub.models.utils import init_weights
-
 from .modules import Decoder, DecoderLayer, Encoder, TokenEmbedding
 
 
@@ -32,7 +28,7 @@ class PARSeq(nn.Module):
 
     def __init__(
         self,
-        num_tokens: int,
+        tokenizer: Tokenizer,  # Include tokenizer so we can infer using this class directly
         max_label_length: int,
         img_size: Sequence[int],
         patch_size: Sequence[int],
@@ -48,6 +44,9 @@ class PARSeq(nn.Module):
         dropout: float,
     ) -> None:
         super().__init__()
+
+        self.tokenizer = tokenizer
+        num_tokens = len(tokenizer)
 
         self.max_label_length = max_label_length
         self.decode_ar = decode_ar
@@ -70,8 +69,7 @@ class PARSeq(nn.Module):
         named_apply(partial(init_weights, exclude=['encoder']), self)
         nn.init.trunc_normal_(self.pos_queries, std=0.02)
 
-        # Enable this before ONNX/TFLITE export for compatibility changes during forward pass
-        self.export_mode = False
+        self.export_mode = None
 
     @property
     def _device(self) -> torch.device:
@@ -105,7 +103,8 @@ class PARSeq(nn.Module):
         tgt_query = self.dropout(tgt_query)
         return self.decoder(tgt_query, tgt_emb, memory, tgt_query_mask, tgt_mask, tgt_padding_mask)
 
-    def forward(self, tokenizer: Tokenizer, images: Tensor, max_length: Optional[int] = None) -> Tensor:
+    def forward(self, images: Tensor, max_length: Optional[int] = None) -> Tensor:
+        tokenizer = self.tokenizer
         testing = max_length is None
         max_length = self.max_label_length if max_length is None else min(max_length, self.max_label_length)
         bs = images.shape[0]
@@ -117,10 +116,11 @@ class PARSeq(nn.Module):
         pos_queries = self.pos_queries[:, :num_steps].expand(bs, -1, -1)
 
         # Special case for the forward permutation. Faster than using `generate_attn_masks()`
-        # FIXME: torch.bool unsupported by onnxruntime for "Where" operation. torch.float slightly reduces performance.
-        # tgt_mask = query_mask = torch.triu(torch.ones((num_steps, num_steps), dtype=torch.bool, device=self._device), 1)
-        # From PyTorch 1 version of PARSeq
-        tgt_mask = query_mask = torch.triu(torch.full((num_steps, num_steps), float('-inf'), device=self._device), 1)
+        if self.export_mode in (None, 'executorch'):
+            tgt_mask = query_mask = torch.triu(torch.ones((num_steps, num_steps), dtype=torch.bool, device=self._device), 1)
+        else:  # torch.bool unsupported by onnxruntime for "Where" operation. torch.float slightly reduces performance.
+            # From PyTorch 1 version of PARSeq. Not compatible with executorch (does not like -inf).
+            tgt_mask = query_mask = torch.triu(torch.full((num_steps, num_steps), float('-inf'), device=self._device), 1)
 
         if self.decode_ar:
             tgt_in = torch.full((bs, num_steps), tokenizer.pad_id, dtype=torch.long, device=self._device)
@@ -165,7 +165,7 @@ class PARSeq(nn.Module):
         if self.refine_iters:
             # For iterative refinement, we always use a 'cloze' mask.
             # We can derive it from the AR forward mask by unmasking the token context to the right.
-            if self.export_mode:  # Requires concrete boolean indexing for JAX compatibility. # TODO: Performance loss?
+            if self.export_mode == 'dynamo':  # Requires concrete boolean indexing for JAX compatibility. # TODO: Performance loss?
                 for x in range(2, num_steps):
                     for y in range(0, x - 1):
                         query_mask[y, x] = 0
@@ -183,7 +183,7 @@ class PARSeq(nn.Module):
                 )
                 logits = self.head(tgt_out)
 
-        if self.export_mode:
+        if self.export_mode is not None:
             return logits.softmax(dim=2)
 
         return logits

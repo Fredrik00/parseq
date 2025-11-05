@@ -1,4 +1,4 @@
-# Requirements listed in requirements/tflite.txt
+# Requirements listed in requirements/onnx.txt
 
 import os
 from os import path
@@ -6,63 +6,42 @@ from os import path
 # PyTorch export does not support fused attention as of version 2.0
 os.environ['TIMM_FUSED_ATTN'] = '0'
 
-import torch
-import yaml
-
-from PIL import Image
-from strhub.models.parseq.system import PARSeq
-from torchvision import transforms as T
-
-def get_transform(img_size=(32, 128)):
-    return T.Compose([
-        T.Resize(img_size, T.InterpolationMode.BICUBIC),
-        T.ToTensor(),
-        T.Normalize(0.5, 0.5),
-    ])
-
-# Gray dummy image
-def get_dummy_input(img_h=32, img_w=128, n_channels=3):
-    transform = get_transform((img_h, img_w))
-    image = Image.new('RGB', (img_w, img_h), color=128)
-    image = transform(image)
-    image = image.view(1, *image.size())
-    return image
 
 if __name__ == '__main__':
+    import torch
+    from torch.export import Dim
+
+    from tools.export_utils import get_dummy_input, prepare_export_model
+
     model_name = "parseq"
+    export_mode = 'dynamo'
+    dynamic_batch_size = False
     output_dir = "onnx"
     os.makedirs(output_dir, exist_ok=True)
 
-    output_path = path.join(output_dir, f"{model_name}.onnx")
-
-    with open("configs/model/parseq.yaml", "r") as f:
-        cfg = yaml.load(f, Loader=yaml.FullLoader)
-
-    print(cfg)
-    charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    lightning_model = PARSeq(
-        charset, charset, 25, 1, img_size=(32, 128),
-        warmup_pct=0.075, weight_decay=0.0, **cfg
-    )
-
-    lightning_model.model.export_mode = True
-    lightning_model.eval()
-
+    model = prepare_export_model(model_name, export_mode)
     image = get_dummy_input()
-    image_batch = image.repeat(128, 1, 1, 1)
 
     # Test model forward pass for debugging purposes
-    # lightning_model(image)
+    # model(image)
 
+    export_opts = {}
+    if dynamic_batch_size:
+        export_opts["args"] = image.repeat(2, 1, 1, 1)
+        export_opts["dynamic_shapes"] = {"images": (Dim.DYNAMIC, Dim.STATIC, Dim.STATIC, Dim.STATIC)}
+    else:
+        export_opts["args"] = image
+
+    # Save model manually after export, otherwise we get a separate data file
     onnx_model = torch.onnx.export(
-        lightning_model,
-        image_batch,
-        input_names=['input'],
-        output_names=['output'],
+        model,
+        input_names=['images'],
+        output_names=['outputs'],
         dynamo=True,
-        dynamic_shapes=[{0: torch.export.Dim('batch_size', min=1, max=128)}],
         optimize=True,
-        verbose=True  # Includes metadata used during quantization
+        verbose=True,  # Includes metadata used during quantization
+        **export_opts
     )
 
+    output_path = path.join(output_dir, f"{model_name}.onnx")
     onnx_model.save(output_path)

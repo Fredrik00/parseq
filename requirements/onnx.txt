@@ -1,9 +1,9 @@
-torch==2.6.0
+torch==2.9.0
 onnx
 onnxruntime
 onnxscript
 pyyaml
 nltk
-pytorch-lightning
+lightning
 timm
 opencv-python-headless
