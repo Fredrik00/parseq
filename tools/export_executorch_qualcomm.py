@@ -7,6 +7,7 @@ import os
 os.environ['TIMM_FUSED_ATTN'] = '0'
 
 
+# Make sure to source QNN_SDK_ROOT/bin/envsetup.sh before running this script
 if __name__ == '__main__':
     from tools.qualcomm_utils import build_executorch_binary
     from tools.export_utils import get_dummy_input, prepare_export_model
