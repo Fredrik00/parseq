@@ -3,6 +3,7 @@
 import os
 from os import path
 
+# TODO: Necessary for executorch?
 # PyTorch export does not support fused attention as of version 2.0
 os.environ['TIMM_FUSED_ATTN'] = '0'
 
