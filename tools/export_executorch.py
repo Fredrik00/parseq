@@ -1,24 +1,20 @@
 # Requirements listed in requirements/executorch.txt
 
-import os
-from os import path
-
-# TODO: Necessary for executorch?
-# PyTorch export does not support fused attention as of version 2.0
-os.environ['TIMM_FUSED_ATTN'] = '0'
-
-
 if __name__ == '__main__':
+    import os
+    from os import path
+
     from executorch.backends.vulkan.partitioner.vulkan_partitioner import VulkanPartitioner
     from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPartitioner
     from executorch.exir import to_edge_transform_and_lower
+
     from torch.export import export
 
     from tools.export_utils import get_dummy_input, prepare_export_model
 
     model_name = "parseq"
     export_mode = 'executorch'
-    output_dir = "executorch"
+    output_dir = "exported/executorch"
     os.makedirs(output_dir, exist_ok=True)
 
     backends = [

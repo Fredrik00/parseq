@@ -146,6 +146,8 @@ cython_debug/
 
 # IDE
 .idea/
-tflite/
-onnx/
-executorch/
+
+exported/
+tflite
+onnx
+executorch

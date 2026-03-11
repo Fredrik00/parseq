@@ -1,13 +1,9 @@
 # Requirements listed in requirements/onnx.txt
 
-import os
-from os import path
-
-# PyTorch export does not support fused attention as of version 2.0
-os.environ['TIMM_FUSED_ATTN'] = '0'
-
-
 if __name__ == '__main__':
+    import os
+    from os import path
+
     import torch
     from torch.export import Dim
 
@@ -16,7 +12,7 @@ if __name__ == '__main__':
     model_name = "parseq"
     export_mode = 'dynamo'
     dynamic_batch_size = False
-    output_dir = "onnx"
+    output_dir = "exported/onnx"
     os.makedirs(output_dir, exist_ok=True)
 
     model = prepare_export_model(model_name, export_mode)
