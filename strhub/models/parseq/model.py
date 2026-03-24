@@ -73,9 +73,6 @@ class PARSeq(nn.Module):
 
     @property
     def _device(self) -> torch.device:
-        if self.export_mode == "qualcomm":
-            return torch.device("cpu")
-
         return next(self.head.parameters(recurse=False)).device
 
     @torch.jit.ignore
